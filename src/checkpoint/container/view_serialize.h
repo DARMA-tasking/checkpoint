@@ -225,6 +225,21 @@ inline void serialize(
 
   DEBUG_PRINT_CHECKPOINT(s, "label=%s: size=%zu\n", label.c_str(), view.size());
 
+  // The implementation of Kokkos DynamicView demands that it be
+  // accessible from HostSpace, so no mirroring and copying is
+  // necessary right now
+#if 0
+  auto host_view = Kokkos::create_mirror_view(view);
+  if (s.isPacking()) {
+    // Create and use an execution space to avoid a global Kokkos::fence()
+    auto exec_space = Kokkos::HostSpace::execution_space{};
+    Kokkos::deep_copy(exec_space, host_view, view);
+    exec_space.fence();
+  }
+#else
+  auto host_view = view;
+#endif
+
   // Serialize the Kokkos::DynamicView data manually by traversing with
   // DynamicView::operator()(...).
   //
@@ -239,9 +254,18 @@ inline void serialize(
       s | elm;
     };
 
-    TraverseRecursive<ViewType,T,1,decltype(fn)>::apply(view,fn);
+    TraverseRecursive<ViewType,T,1,decltype(fn)>::apply(host_view, fn);
 #else
-    TraverseManual<SerializerT,ViewType,1>::apply(s,view);
+    TraverseManual<SerializerT,ViewType,1>::apply(s, host_view);
+#endif
+
+#if 0
+    if (s.isUnpacking()) {
+      // Create and use an execution space to avoid a global Kokkos::fence()
+      auto exec_space = Kokkos::HostSpace::execution_space{};
+      Kokkos::deep_copy(exec_space, view, host_view);
+      exec_space.fence();
+    }
 #endif
 }
 
@@ -324,25 +348,33 @@ inline void serialize_impl(SerializerT& s, Kokkos::DynRankView<T,Args...>& view)
   s | init;
 
   if (init) {
+    auto host_view = Kokkos::create_mirror_view(view);
+    if (s.isPacking()) {
+      // Create and use an execution space to avoid a global Kokkos::fence()
+      auto exec_space = Kokkos::HostSpace::execution_space{};
+      Kokkos::deep_copy(exec_space, host_view, view);
+      exec_space.fence();
+    }
+
     // Serialize the actual data owned by the Kokkos::View
     if (is_contig) {
       // Serialize the data directly out of the data buffer
-      dispatch::serializeArray(s, view.data(), num_elms);
+      dispatch::serializeArray(s, host_view.data(), num_elms);
     } else {
       if (dims == 1) {
-        TraverseManual<SerializerT,ViewType,1>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,1>::apply(s,host_view);
       } else if (dims == 2) {
-        TraverseManual<SerializerT,ViewType,2>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,2>::apply(s,host_view);
       } else if (dims == 3) {
-        TraverseManual<SerializerT,ViewType,3>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,3>::apply(s,host_view);
       } else if (dims == 4) {
-        TraverseManual<SerializerT,ViewType,4>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,4>::apply(s,host_view);
       } else if (dims == 5) {
-        TraverseManual<SerializerT,ViewType,5>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,5>::apply(s,host_view);
       } else if (dims == 6) {
-        TraverseManual<SerializerT,ViewType,6>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,6>::apply(s,host_view);
       } else if (dims == 7) {
-        TraverseManual<SerializerT,ViewType,7>::apply(s,view);
+        TraverseManual<SerializerT,ViewType,7>::apply(s,host_view);
       } else {
         checkpointAssert(
           false,
@@ -350,6 +382,13 @@ inline void serialize_impl(SerializerT& s, Kokkos::DynRankView<T,Args...>& view)
           " for non-contiguous views"
         );
       }
+    }
+
+    if (s.isUnpacking()) {
+      // Create and use an execution space to avoid a global Kokkos::fence()
+      auto exec_space = Kokkos::HostSpace::execution_space{};
+      Kokkos::deep_copy(exec_space, view, host_view);
+      exec_space.fence();
     }
   }
 }
@@ -404,7 +443,7 @@ inline void serialize_impl(SerializerT& s, Kokkos::View<T,Args...>& view) {
   // get propagate to the View from the layout
   //
   // Note: enabling this option will *not* work with Kokkos::LayoutStride. It
-  // will fail to compile with aa static_assert: because LayoutStide is not
+  // will fail to compile with a static_assert: because LayoutStide is not
   // extent constructible: traits::array_layout::is_extent_constructible!
   //
   constexpr auto dyn_dims = CountDims<ViewType, T>::dynamic;
@@ -446,10 +485,18 @@ inline void serialize_impl(SerializerT& s, Kokkos::View<T,Args...>& view) {
   s | init;
 
   if (init) {
+    auto host_view = Kokkos::create_mirror_view(view);
+    if (s.isPacking()) {
+      // Create and use an execution space to avoid a global Kokkos::fence()
+      auto exec_space = Kokkos::HostSpace::execution_space{};
+      Kokkos::deep_copy(exec_space, host_view, view);
+      exec_space.fence();
+    }
+
     // Serialize the actual data owned by the Kokkos::View
     if (is_contig) {
       // Serialize the data directly out of the data buffer
-      dispatch::serializeArray(s, view.data(), num_elms);
+      dispatch::serializeArray(s, host_view.data(), num_elms);
     } else {
       // Serialize manually traversing the data with Kokkos::View::operator()(...)
 
@@ -462,10 +509,17 @@ inline void serialize_impl(SerializerT& s, Kokkos::View<T,Args...>& view) {
         s | elm;
       };
 
-      TraverseRecursive<ViewType,T,dims,decltype(fn)>::apply(view,fn);
+      TraverseRecursive<ViewType,T,dims,decltype(fn)>::apply(host_view,fn);
 #else
-      TraverseManual<SerializerT,ViewType,rank_val>::apply(s,view);
+      TraverseManual<SerializerT,ViewType,rank_val>::apply(s,host_view);
 #endif
+    }
+
+    if (s.isUnpacking()) {
+      // Create and use an execution space to avoid a global Kokkos::fence()
+      auto exec_space = Kokkos::HostSpace::execution_space{};
+      Kokkos::deep_copy(exec_space, view, host_view);
+      exec_space.fence();
     }
   }
 }
