@@ -2,7 +2,8 @@
 //@HEADER
 // *****************************************************************************
 //
-//                               list_serialize.h
+//                           reconstructor_traits.h
+//                           DARMA Toolkit v. 1.0.0
 //                 DARMA/checkpoint => Serialization Library
 //
 // Copyright 2019 National Technology & Engineering Solutions of Sandia, LLC
@@ -41,69 +42,54 @@
 //@HEADER
 */
 
-#if !defined INCLUDED_CHECKPOINT_CONTAINER_LIST_SERIALIZE_H
-#define INCLUDED_CHECKPOINT_CONTAINER_LIST_SERIALIZE_H
+#if !defined INCLUDED_CHECKPOINT_TRAITS_RECONSTRUCTOR_TRAITS_H
+#define INCLUDED_CHECKPOINT_TRAITS_RECONSTRUCTOR_TRAITS_H
 
-#include "checkpoint/common.h"
-#include "checkpoint/dispatch/allocator.h"
-#include "checkpoint/serializers/serializers_headers.h"
-#include "checkpoint/container/container_serialize.h"
+#include "checkpoint/traits/serializable_traits.h"
 
-#include <list>
-#include <deque>
+#include <type_traits>
 
 namespace checkpoint {
 
-template <typename Serializer, typename ContainerT, typename ElmT>
-inline typename std::enable_if_t<
-  not std::is_same<Serializer, checkpoint::Footprinter>::value,
-  void
-> deserializeOrderedElems(
-  Serializer& s, ContainerT& cont, typename ContainerT::size_type size
-) {
-  using Alloc = dispatch::Allocator<ElmT>;
-  using Reconstructor =
-    dispatch::Reconstructor<typename dispatch::CleanType<ElmT>::CleanT>;
+template <typename T>
+struct ReconstructorTraits {
+  template <typename U>
+  using isDefaultConsType =
+    typename std::enable_if<std::is_default_constructible<U>::value, T>::type;
 
-  Alloc allocated;
-  auto* reconstructed = Reconstructor::construct(allocated.buf);
-  cont.resize(size, *reconstructed);
-  for (auto& val : cont) {
-    s | val;
-  }
-}
+  template <typename U>
+  using isNotDefaultConsType = typename std::enable_if<
+    not std::is_default_constructible<U>::value, T>::type;
 
-template <typename Serializer, typename ContainerT, typename ElmT>
-inline typename std::enable_if_t<
-  std::is_same<Serializer, checkpoint::Footprinter>::value,
-  void
-> deserializeOrderedElems(
-  Serializer& s, ContainerT& cont, typename ContainerT::size_type size
-) { }
+  template <typename U>
+  using isReconstructibleType = typename std::enable_if<
+    SerializableTraits<U, void>::is_intrusive_reconstructible, T>::type;
 
-template <typename Serializer, typename ContainerT>
-inline void serializeOrderedContainer(Serializer& s, ContainerT& cont) {
-  using ValueT = typename ContainerT::value_type;
+  template <typename U>
+  using isNonIntReconstructibleType = typename std::enable_if<
+    SerializableTraits<U, void>::is_nonintrusive_reconstructible, T>::type;
 
-  typename ContainerT::size_type size = serializeContainerSize(s, cont);
+  template <typename U>
+  using isNotReconstructibleType = typename std::enable_if<
+    not SerializableTraits<U, void>::is_reconstructible, T>::type;
 
-  if (s.isUnpacking()) {
-    deserializeOrderedElems<Serializer, ContainerT, ValueT>(s, cont, size);
-  } else {
-    serializeContainerElems<Serializer, ContainerT>(s, cont);
-  }
-}
+  template <typename U>
+  using isTaggedConstructibleType = typename std::enable_if<
+    SerializableTraits<U, void>::is_tagged_constructible, T>::type;
 
-template <typename Serializer, typename T>
-inline void serialize(Serializer& s, std::list<T>& lst) {
-  serializeOrderedContainer(s, lst);
-}
+  template <typename U>
+  using isNotTaggedConstructibleType = typename std::enable_if<
+    not SerializableTraits<U, void>::is_tagged_constructible, T>::type;
 
-template <typename Serializer, typename T>
-inline void serialize(Serializer& s, std::deque<T>& lst) {
-  serializeOrderedContainer(s, lst);
-}
+  template <typename U>
+  using isConstructible = typename std::enable_if<
+    SerializableTraits<U, void>::is_constructible, T>::type;
 
-} /* end namespace checkpoint */
+  template <typename U>
+  using isNotConstructible = typename std::enable_if<
+    not SerializableTraits<U, void>::is_constructible, T>::type;
+};
 
-#endif /*INCLUDED_CHECKPOINT_CONTAINER_LIST_SERIALIZE_H*/
+} // namespace checkpoint
+
+#endif /*INCLUDED_CHECKPOINT_TRAITS_RECONSTRUCTOR_TRAITS_H*/

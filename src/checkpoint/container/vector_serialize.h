@@ -45,6 +45,9 @@
 #define INCLUDED_CHECKPOINT_CONTAINER_VECTOR_SERIALIZE_H
 
 #include "checkpoint/common.h"
+#include "checkpoint/dispatch/allocator.h"
+#include "checkpoint/dispatch/dispatch.h"
+#include "checkpoint/dispatch/reconstructor.h"
 #include "checkpoint/serializers/serializers_headers.h"
 
 #include <vector>
@@ -53,29 +56,57 @@ namespace checkpoint {
 
 template <typename SerializerT, typename T, typename VectorAllocator>
 typename std::enable_if_t<
-  not std::is_same<SerializerT, checkpoint::Footprinter>::value,
-  void
-> serializeVectorMeta(SerializerT& s, std::vector<T, VectorAllocator>& vec) {
+  not std::is_same<SerializerT, checkpoint::Footprinter>::value, SerialSizeType
+>
+serializeVectorMeta(SerializerT& s, std::vector<T, VectorAllocator>& vec) {
   SerialSizeType vec_capacity = vec.capacity();
   s | vec_capacity;
   vec.reserve(vec_capacity);
 
   SerialSizeType vec_size = vec.size();
   s | vec_size;
-  vec.resize(vec_size);
+  return vec_size;
 }
 
 template <typename SerializerT, typename T, typename VectorAllocator>
 typename std::enable_if_t<
-  std::is_same<SerializerT, checkpoint::Footprinter>::value,
-  void
-> serializeVectorMeta(SerializerT& s, std::vector<T, VectorAllocator>& vec) {
+  std::is_same<SerializerT, checkpoint::Footprinter>::value, SerialSizeType
+>
+serializeVectorMeta(SerializerT& s, std::vector<T, VectorAllocator>& vec) {
   s.countBytes(vec);
+  return vec.size();
+}
+
+template <typename T, typename VectorAllocator>
+void constructVectorData(
+  SerialSizeType const vec_size, std::vector<T, VectorAllocator>& vec,
+  typename ReconstructorTraits<T>::template isDefaultConsType<T>* = nullptr
+) {
+  vec.resize(vec_size);
+}
+
+template <typename T, typename VectorAllocator>
+void constructVectorData(
+  SerialSizeType const vec_size, std::vector<T, VectorAllocator>& vec,
+  typename ReconstructorTraits<T>::template isNotDefaultConsType<T>* = nullptr
+) {
+  using Alloc = dispatch::Allocator<T>;
+  using Reconstructor =
+    dispatch::Reconstructor<typename dispatch::CleanType<T>::CleanT>;
+
+  Alloc allocated;
+  auto* reconstructed = Reconstructor::construct(allocated.buf);
+  vec.resize(vec_size, *reconstructed);
 }
 
 template <typename Serializer, typename T, typename VectorAllocator>
 void serialize(Serializer& s, std::vector<T, VectorAllocator>& vec) {
-  serializeVectorMeta(s, vec);
+  auto const vec_size = serializeVectorMeta(s, vec);
+
+  if (s.isUnpacking()) {
+    constructVectorData(vec_size, vec);
+  }
+
   dispatch::serializeArray(s, vec.data(), vec.size());
 
   // make sure to account for reserved space when footprinting
@@ -89,7 +120,11 @@ void serialize(Serializer& s, std::vector<bool, VectorAllocator>& vec) {
     return;
   }
 
-  serializeVectorMeta(s, vec);
+  auto const vec_size = serializeVectorMeta(s, vec);
+
+  if (s.isUnpacking()) {
+    constructVectorData(vec_size, vec);
+  }
 
   if (!s.isUnpacking()) {
     for (bool elt : vec) {
